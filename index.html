@@ -542,12 +542,12 @@
         }
 
         /* Panel ẩn */
-        .account-panel, .password-panel {
+        .account-panel {
             display: none;
             animation: fadeIn 0.3s ease;
         }
 
-        .account-panel.active, .password-panel.active {
+        .account-panel.active {
             display: block;
         }
 
@@ -788,56 +788,10 @@
     <div id="toastContainer"></div>
 
     <script>
-        // ==================== STORAGE KEYS ====================
-        const STORAGE_KEYS = {
-            users: 'tkpro_users',
-            session: 'tkpro_session',
-        };
+        // ==================== CẤU HÌNH API ====================
+        const API_BASE_URL = 'http://localhost:3000/api'; // Thay bằng URL server thật của bạn
 
         // ==================== UTILITY FUNCTIONS ====================
-        function getUsers() {
-            try {
-                const data = localStorage.getItem(STORAGE_KEYS.users);
-                return data ? JSON.parse(data) : {};
-            } catch (e) {
-                console.warn('Không thể truy cập localStorage:', e);
-                return {};
-            }
-        }
-
-        function saveUsers(users) {
-            try {
-                localStorage.setItem(STORAGE_KEYS.users, JSON.stringify(users));
-            } catch (e) {
-                console.error('Lỗi lưu dữ liệu:', e);
-                showToast('Không thể lưu dữ liệu. Vui lòng kiểm tra bộ nhớ trình duyệt.', 'error');
-            }
-        }
-
-        function getSession() {
-            try {
-                return localStorage.getItem(STORAGE_KEYS.session);
-            } catch (e) {
-                return null;
-            }
-        }
-
-        function setSession(username) {
-            try {
-                localStorage.setItem(STORAGE_KEYS.session, username);
-            } catch (e) {
-                console.error('Lỗi lưu phiên:', e);
-            }
-        }
-
-        function clearSession() {
-            try {
-                localStorage.removeItem(STORAGE_KEYS.session);
-            } catch (e) {
-                console.error('Lỗi xóa phiên:', e);
-            }
-        }
-
         function formatCurrency(amount) {
             return amount.toLocaleString('vi-VN') + ' ₫';
         }
@@ -865,12 +819,35 @@
             }, 3000);
         }
 
+        // ==================== API CALLS (fetch) ====================
+        async function apiCall(endpoint, method = 'GET', data = null, token = null) {
+            const headers = { 'Content-Type': 'application/json' };
+            if (token) headers['Authorization'] = 'Bearer ' + token;
+            try {
+                const response = await fetch(API_BASE_URL + endpoint, {
+                    method: method,
+                    headers: headers,
+                    body: data ? JSON.stringify(data) : null
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.message || 'Lỗi máy chủ');
+                }
+                return result;
+            } catch (error) {
+                console.error('API Error:', error);
+                throw error;
+            }
+        }
+
+        // Lưu token tạm thời trong biến (hoặc có thể lưu localStorage cho token, nhưng dữ liệu chính ở server)
+        let authToken = null;
+
         // ==================== DARK MODE ====================
         function toggleDarkMode() {
             document.body.classList.toggle('dark-mode');
             const isDark = document.body.classList.contains('dark-mode');
             localStorage.setItem('tkpro_dark_mode', isDark ? '1' : '0');
-            // Cập nhật biểu tượng
             document.querySelector('.dark-mode-toggle').textContent = isDark ? '☀️' : '🌙';
         }
 
@@ -936,14 +913,8 @@
                 contentGrid.style.display = 'none';
                 historyPanel.style.display = 'none';
                 accountPanel.classList.add('active');
-                // Cập nhật thông tin tài khoản
-                const username = document.getElementById('appContainer').dataset.username;
-                const users = getUsers();
-                if (users[username]) {
-                    document.getElementById('accountUsername').textContent = username;
-                    document.getElementById('accountCreated').textContent = new Date(users[username].createdAt).toLocaleDateString('vi-VN');
-                }
-                // Xóa các trường mật khẩu cũ
+                // Cập nhật thông tin tài khoản từ server (sẽ gọi API)
+                fetchUserData();
                 document.getElementById('currentPassword').value = '';
                 document.getElementById('newPassword').value = '';
                 document.getElementById('confirmNewPassword').value = '';
@@ -954,9 +925,8 @@
         function handleScroll() {
             const footerNav = document.getElementById('footerNav');
             if (!footerNav) return;
-            // Kiểm tra xem người dùng đã cuộn gần cuối trang chưa
             const scrollPosition = window.scrollY + window.innerHeight;
-            const bottomPosition = document.documentElement.scrollHeight - 150; // cách cuối 150px
+            const bottomPosition = document.documentElement.scrollHeight - 150;
             if (scrollPosition >= bottomPosition) {
                 footerNav.classList.add('visible');
             } else {
@@ -966,8 +936,8 @@
 
         window.addEventListener('scroll', handleScroll);
 
-        // ==================== AUTH HANDLERS ====================
-        function handleLogin(e) {
+        // ==================== AUTH HANDLERS (API) ====================
+        async function handleLogin(e) {
             e.preventDefault();
             const username = document.getElementById('loginUsername').value.trim();
             const password = document.getElementById('loginPassword').value.trim();
@@ -977,23 +947,17 @@
                 return;
             }
 
-            const users = getUsers();
-            if (!users[username]) {
-                showToast('Tên đăng nhập không tồn tại!', 'error');
-                return;
+            try {
+                const result = await apiCall('/login', 'POST', { username, password });
+                authToken = result.token;
+                showToast('Đăng nhập thành công! Chào ' + username + ' 👋', 'success');
+                enterApp(result.user);
+            } catch (error) {
+                showToast(error.message, 'error');
             }
-            if (users[username].password !== password) {
-                showToast('Mật khẩu không chính xác!', 'error');
-                return;
-            }
-
-            resetDailySavingsIfNeeded(username);
-            setSession(username);
-            showToast('Đăng nhập thành công! Chào ' + username + ' 👋', 'success');
-            enterApp(username);
         }
 
-        function handleRegister(e) {
+        async function handleRegister(e) {
             e.preventDefault();
             clearRegisterErrors();
 
@@ -1002,7 +966,6 @@
             const confirm = document.getElementById('regConfirm').value.trim();
 
             let hasError = false;
-
             if (username.length < 3) {
                 document.getElementById('regUsernameError').textContent = 'Tên đăng nhập phải ít nhất 3 ký tự.';
                 hasError = true;
@@ -1015,37 +978,33 @@
                 document.getElementById('regConfirmError').textContent = 'Mật khẩu xác nhận không khớp.';
                 hasError = true;
             }
-
             if (hasError) {
                 showToast('Vui lòng kiểm tra lại thông tin đăng ký.', 'error');
                 return;
             }
 
-            const users = getUsers();
-            if (users[username]) {
-                document.getElementById('regUsernameError').textContent = 'Tên đăng nhập đã tồn tại. Vui lòng chọn tên khác.';
-                showToast('Tên đăng nhập đã tồn tại!', 'error');
-                return;
+            try {
+                const result = await apiCall('/register', 'POST', { username, password });
+                authToken = result.token;
+                showToast('Đăng ký thành công! Chào mừng ' + username + ' 🎉', 'success');
+                enterApp(result.user);
+            } catch (error) {
+                showToast(error.message, 'error');
+                if (error.message.includes('tồn tại')) {
+                    document.getElementById('regUsernameError').textContent = 'Tên đăng nhập đã tồn tại.';
+                }
             }
-
-            users[username] = {
-                password: password,
-                createdAt: new Date().toISOString(),
-                dailySavings: 0,
-                dailyDate: getTodayKey(),
-                totalSavings: 0,
-                totalSpent: 0,
-                history: []
-            };
-
-            saveUsers(users);
-            setSession(username);
-            showToast('Đăng ký thành công! Chào mừng ' + username + ' 🎉', 'success');
-            enterApp(username);
         }
 
-        function handleLogout() {
-            clearSession();
+        async function handleLogout() {
+            try {
+                if (authToken) {
+                    await apiCall('/logout', 'POST', null, authToken);
+                }
+            } catch (e) {
+                console.warn('Lỗi logout:', e);
+            }
+            authToken = null;
             const authContainer = document.getElementById('authContainer');
             const appContainer = document.getElementById('appContainer');
             appContainer.classList.remove('active');
@@ -1053,17 +1012,12 @@
             document.getElementById('loginForm').reset();
             document.getElementById('registerForm').reset();
             clearRegisterErrors();
-            // Reset về tab dashboard
             switchFooterTab('dashboard');
-            // Ẩn footer nav
             document.getElementById('footerNav').classList.remove('visible');
             showToast('Đã đăng xuất thành công!', 'info');
         }
 
-        function changePassword() {
-            const username = document.getElementById('appContainer').dataset.username;
-            if (!username) return;
-
+        async function changePassword() {
             const currentPassword = document.getElementById('currentPassword').value.trim();
             const newPassword = document.getElementById('newPassword').value.trim();
             const confirmNewPassword = document.getElementById('confirmNewPassword').value.trim();
@@ -1081,47 +1035,30 @@
                 return;
             }
 
-            const users = getUsers();
-            const user = users[username];
-            if (!user) {
-                showToast('Không tìm thấy tài khoản.', 'error');
-                return;
-            }
-            if (user.password !== currentPassword) {
-                showToast('Mật khẩu hiện tại không chính xác.', 'error');
-                return;
-            }
-
-            user.password = newPassword;
-            saveUsers(users);
-            showToast('Đổi mật khẩu thành công!', 'success');
-            document.getElementById('currentPassword').value = '';
-            document.getElementById('newPassword').value = '';
-            document.getElementById('confirmNewPassword').value = '';
-        }
-
-        // ==================== DAILY RESET ====================
-        function resetDailySavingsIfNeeded(username) {
-            const users = getUsers();
-            if (!users[username]) return;
-            const today = getTodayKey();
-            if (users[username].dailyDate !== today) {
-                users[username].dailySavings = 0;
-                users[username].dailyDate = today;
-                saveUsers(users);
+            try {
+                await apiCall('/change-password', 'POST', {
+                    currentPassword,
+                    newPassword
+                }, authToken);
+                showToast('Đổi mật khẩu thành công!', 'success');
+                document.getElementById('currentPassword').value = '';
+                document.getElementById('newPassword').value = '';
+                document.getElementById('confirmNewPassword').value = '';
+            } catch (error) {
+                showToast(error.message, 'error');
             }
         }
 
         // ==================== APP ENTRY ====================
-        function enterApp(username) {
+        async function enterApp(userData) {
             const authContainer = document.getElementById('authContainer');
             const appContainer = document.getElementById('appContainer');
             authContainer.style.display = 'none';
             appContainer.classList.add('active');
-            appContainer.dataset.username = username;
+            appContainer.dataset.username = userData.username;
 
-            document.getElementById('userName').textContent = username;
-            document.getElementById('userAvatar').textContent = username.charAt(0).toUpperCase();
+            document.getElementById('userName').textContent = userData.username;
+            document.getElementById('userAvatar').textContent = userData.username.charAt(0).toUpperCase();
             document.getElementById('dateDisplay').textContent = getTodayDisplay();
 
             const hour = new Date().getHours();
@@ -1131,34 +1068,36 @@
             else greeting = 'Chúc ngủ ngon! 🌙';
             document.getElementById('userGreeting').textContent = greeting;
 
-            loadUserData(username);
-            // Luôn bắt đầu với tab dashboard
+            // Load dữ liệu từ server
+            await loadUserData(userData.username);
+
             switchFooterTab('dashboard');
-            // Đặt lại scroll
             window.scrollTo(0, 0);
         }
 
-        // ==================== LOAD USER DATA ====================
-        function loadUserData(username) {
-            resetDailySavingsIfNeeded(username);
-            const users = getUsers();
-            const user = users[username];
-            if (!user) return;
+        // ==================== LOAD USER DATA (từ server) ====================
+        async function loadUserData(username) {
+            try {
+                const data = await apiCall('/user', 'GET', null, authToken);
+                // Giả sử server trả về { user: { dailySavings, totalSavings, totalSpent, history, dailyDate } }
+                const user = data.user;
+                document.getElementById('todaySavings').textContent = formatCurrency(user.dailySavings);
+                document.getElementById('totalSavings').textContent = formatCurrency(user.totalSavings);
+                document.getElementById('totalSpent').textContent = formatCurrency(user.totalSpent);
+                const balance = user.totalSavings - user.totalSpent;
+                document.getElementById('currentBalance').textContent = formatCurrency(balance);
+                document.getElementById('currentBalance').style.color = balance >= 0 ? 'var(--secondary)' : 'var(--danger)';
 
-            document.getElementById('todaySavings').textContent = formatCurrency(user.dailySavings);
-            document.getElementById('totalSavings').textContent = formatCurrency(user.totalSavings);
-            document.getElementById('totalSpent').textContent = formatCurrency(user.totalSpent);
-            const balance = user.totalSavings - user.totalSpent;
-            document.getElementById('currentBalance').textContent = formatCurrency(balance);
-            document.getElementById('currentBalance').style.color = balance >= 0 ? 'var(--secondary)' : 'var(--danger)';
+                if (user.dailySavings > 0) {
+                    document.getElementById('todaySub').textContent = 'Đã tiết kiệm trong ngày';
+                } else {
+                    document.getElementById('todaySub').textContent = 'Chưa có giao dịch';
+                }
 
-            if (user.dailySavings > 0) {
-                document.getElementById('todaySub').textContent = 'Đã tiết kiệm trong ngày';
-            } else {
-                document.getElementById('todaySub').textContent = 'Chưa có giao dịch';
+                renderHistory(user.history);
+            } catch (error) {
+                showToast('Không thể tải dữ liệu: ' + error.message, 'error');
             }
-
-            renderHistory(user.history);
         }
 
         // ==================== RENDER HISTORY ====================
@@ -1212,11 +1151,8 @@
             container.innerHTML = html;
         }
 
-        // ==================== ADD SAVINGS ====================
-        function addSavings() {
-            const username = document.getElementById('appContainer').dataset.username;
-            if (!username) return;
-
+        // ==================== ADD SAVINGS (API) ====================
+        async function addSavings() {
             const amountInput = document.getElementById('savingsAmount');
             const descriptionInput = document.getElementById('savingsDescription');
             const amount = parseInt(amountInput.value);
@@ -1227,39 +1163,23 @@
                 return;
             }
 
-            resetDailySavingsIfNeeded(username);
-            const users = getUsers();
-            const user = users[username];
-            if (!user) return;
-
-            const now = new Date();
-            const timestamp = now.toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' });
-
-            user.dailySavings += amount;
-            user.totalSavings += amount;
-            const balanceAfter = user.totalSavings - user.totalSpent;
-
-            user.history.push({
-                type: 'income',
-                amount: amount,
-                description: description || '',
-                timestamp: timestamp,
-                balanceAfter: balanceAfter,
-                date: getTodayKey()
-            });
-
-            saveUsers(users);
-            amountInput.value = '';
-            descriptionInput.value = '';
-            showToast('Đã thêm ' + formatCurrency(amount) + ' vào tiết kiệm! 💰', 'success');
-            loadUserData(username);
+            try {
+                const result = await apiCall('/savings', 'POST', {
+                    amount,
+                    description
+                }, authToken);
+                showToast('Đã thêm ' + formatCurrency(amount) + ' vào tiết kiệm! 💰', 'success');
+                amountInput.value = '';
+                descriptionInput.value = '';
+                // Cập nhật lại dữ liệu từ server
+                await loadUserData(document.getElementById('appContainer').dataset.username);
+            } catch (error) {
+                showToast(error.message, 'error');
+            }
         }
 
-        // ==================== ADD EXPENSE ====================
-        function addExpense() {
-            const username = document.getElementById('appContainer').dataset.username;
-            if (!username) return;
-
+        // ==================== ADD EXPENSE (API) ====================
+        async function addExpense() {
             const amountInput = document.getElementById('expenseAmount');
             const descriptionInput = document.getElementById('expenseDescription');
             const amount = parseInt(amountInput.value);
@@ -1270,78 +1190,77 @@
                 return;
             }
 
-            resetDailySavingsIfNeeded(username);
-            const users = getUsers();
-            const user = users[username];
-            if (!user) return;
-
-            const currentBalance = user.totalSavings - user.totalSpent;
-            if (amount > currentBalance) {
-                showToast('Số dư không đủ để chi tiêu! Số dư hiện tại: ' + formatCurrency(currentBalance), 'error');
-                return;
+            try {
+                const result = await apiCall('/expense', 'POST', {
+                    amount,
+                    description
+                }, authToken);
+                showToast('Đã ghi chi tiêu ' + formatCurrency(amount) + ' 💸', 'info');
+                amountInput.value = '';
+                descriptionInput.value = '';
+                await loadUserData(document.getElementById('appContainer').dataset.username);
+            } catch (error) {
+                showToast(error.message, 'error');
             }
-
-            const now = new Date();
-            const timestamp = now.toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' });
-
-            user.totalSpent += amount;
-            const balanceAfter = user.totalSavings - user.totalSpent;
-
-            user.history.push({
-                type: 'expense',
-                amount: amount,
-                description: description || '',
-                timestamp: timestamp,
-                balanceAfter: balanceAfter,
-                date: getTodayKey()
-            });
-
-            saveUsers(users);
-            amountInput.value = '';
-            descriptionInput.value = '';
-            showToast('Đã ghi chi tiêu ' + formatCurrency(amount) + ' 💸', 'info');
-            loadUserData(username);
         }
 
-        // ==================== SESSION CHECK ON LOAD ====================
-        function initApp() {
+        // ==================== SESSION CHECK ====================
+        async function initApp() {
             applyDarkModePreference();
-            const session = getSession();
-            if (session) {
-                const users = getUsers();
-                if (users[session]) {
-                    resetDailySavingsIfNeeded(session);
-                    enterApp(session);
-                    return;
-                } else {
-                    clearSession();
+            // Kiểm tra token trong localStorage (nếu bạn lưu token)
+            const savedToken = localStorage.getItem('tkpro_token');
+            if (savedToken) {
+                authToken = savedToken;
+                try {
+                    const result = await apiCall('/me', 'GET', null, authToken);
+                    if (result.user) {
+                        await enterApp(result.user);
+                        return;
+                    }
+                } catch (e) {
+                    console.warn('Token không hợp lệ, đăng nhập lại');
+                    localStorage.removeItem('tkpro_token');
+                    authToken = null;
                 }
             }
             document.getElementById('authContainer').style.display = 'block';
             document.getElementById('appContainer').classList.remove('active');
         }
 
+        // Lưu token khi đăng nhập thành công
+        const originalHandleLogin = handleLogin;
+        handleLogin = async function(e) {
+            await originalHandleLogin(e);
+            if (authToken) localStorage.setItem('tkpro_token', authToken);
+        };
+
+        const originalHandleRegister = handleRegister;
+        handleRegister = async function(e) {
+            await originalHandleRegister(e);
+            if (authToken) localStorage.setItem('tkpro_token', authToken);
+        };
+
+        // Logout xóa token
+        const originalHandleLogout = handleLogout;
+        handleLogout = async function() {
+            await originalHandleLogout();
+            localStorage.removeItem('tkpro_token');
+        };
+
         // ==================== INIT ====================
         initApp();
 
-        // Auto-refresh date every minute (in case of midnight rollover)
+        // Auto-refresh date every minute (nếu cần)
         setInterval(() => {
-            const appContainer = document.getElementById('appContainer');
-            if (appContainer.classList.contains('active') && appContainer.dataset.username) {
-                const username = appContainer.dataset.username;
-                const users = getUsers();
-                if (users[username]) {
-                    const today = getTodayKey();
-                    if (users[username].dailyDate !== today) {
-                        resetDailySavingsIfNeeded(username);
-                        loadUserData(username);
-                        showToast('Ngày mới! Số tiền tiết kiệm hôm nay đã được reset về 0.', 'info');
-                    }
+            if (document.getElementById('appContainer').classList.contains('active')) {
+                const username = document.getElementById('appContainer').dataset.username;
+                if (username) {
+                    loadUserData(username); // Có thể gọi lại để reset nếu server đã reset
                 }
             }
         }, 60000);
 
-        // Enter key for inputs
+        // Enter key
         document.getElementById('savingsAmount').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') addSavings();
         });
